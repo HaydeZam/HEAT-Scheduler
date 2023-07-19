@@ -1,8 +1,11 @@
 #include "NonPreemptive.h"
 
-//Global variables
-Task_t tasks[TASKS_N];
-Scheduler_t scheduler;
+// ************************ Global variables ****************************
+static Task_t tasks[TASKS_N];
+static Scheduler_t scheduler;
+static Timer_t timers[N_TIMERS];
+static Scheduler_t Sche;
+static unsigned char TimerID;
 
 
 // ************************Functions definitions ************************
@@ -10,7 +13,6 @@ long milliseconds(void)
 {
     return clock() / (CLOCKS_PER_SEC / 1000);
 }
-
 /// Scheduler_Init
 /// <summary>
 /// The function should initialize the hscheduler structure with the values passed as parameters
@@ -18,7 +20,6 @@ long milliseconds(void)
 /// and the amount of time the scheduler should run.
 /// </summary>
 /// <param name="hscheduler"></param>
-
 void Scheduler_Init(Scheduler_t* hscheduler)
 {
     hscheduler->tasksNum = TASKS_N;
@@ -26,6 +27,9 @@ void Scheduler_Init(Scheduler_t* hscheduler)
     hscheduler->BaseTick = TICK_VAL;
     hscheduler->timeout = TIMEOUT;
     hscheduler->tasksCount = 0;
+    hscheduler->timers = N_TIMERS;
+    hscheduler->timerCount = 0;
+    hscheduler->timerPtr = &timers;
 }
 /// <summary>
 /// The function will set the task TCB with the following parameters, 
@@ -89,7 +93,6 @@ unsigned char Scheduler_StopTask(Scheduler_t* hscheduler, unsigned char task)
     
     return returnVal;
 
-
 }
 /// <summary>
 /// Once a task is stopped using the function Scheduler_StopTask , 
@@ -111,9 +114,8 @@ unsigned char Scheduler_StartTask(Scheduler_t* hscheduler, unsigned char task)
     }
     return returnVal;
 }
-
 /// <summary>
-/// The new periodicity shall be a multiple of the tick value otherwise wonâ€™t be 
+/// The new periodicity shall be a multiple of the tick value otherwise won’t be 
 /// affected by the new period. The second parameter indicates the task to be started, 
 /// which is a number from 1 to n task registered.Number zero is forbidden.the function
 ///  will return a TRUE if the task was stopped otherwise returns FALSE.
@@ -169,7 +171,12 @@ void Task_1000ms(void)
         printf("This is a counter from task 1000ms: %d\n", loop++);
     }
 }
-
+void Callback(void)
+{
+    static int loop = 0;
+    printf("This is a counter from timer callback: %d\n", loop++);
+    Scheduler_StartTimer(&scheduler,TimerID);
+}
 /// <summary>
 /// This is the function in charge of running the task init functions one single time 
 /// and actual run each registered task according to their periodicity in an infinite loop,
@@ -197,7 +204,7 @@ void Scheduler_Start(Scheduler_t* hscheduler)
     while ((x*hscheduler->BaseTick) < hscheduler->timeout)
     {
         ActualTick = milliseconds();
-        // Preguntamos si han pasado 500ms desde que obtuvimos el anterior valor
+        // Preguntamos si han pasado basetick desde que obtuvimos el anterior valor
         if ((ActualTick - LastTick) >= hscheduler->BaseTick)
         {
             //Enter interruption
@@ -212,6 +219,21 @@ void Scheduler_Start(Scheduler_t* hscheduler)
                 hscheduler->TaskList[i].elapsedTime += hscheduler->BaseTick;
                 
             }
+            if (hscheduler->timerCount > 0)// There are registered timers
+            {
+                for (int i = 0; i < hscheduler->timerCount; i++)
+                {
+                    if (hscheduler->timerPtr[i].StartFlag == TIMER_ON)
+                    {
+                        hscheduler->timerPtr[i].Count = hscheduler->timerPtr[i].Count - hscheduler->BaseTick;;
+                        if (hscheduler->timerPtr[i].Count == 0)
+                        {
+                            Scheduler_StopTimer(hscheduler, i + 1);
+                        }
+                    }
+                    
+                }
+            }
 
             ///------------------------------------------------------------
             LastTick = milliseconds();//volvemos a obtener los ms actuales
@@ -221,6 +243,115 @@ void Scheduler_Start(Scheduler_t* hscheduler)
 
 }
 
+// ---- Timer functions -----
+
+/// <summary>
+/// The function will register a new software timer to be updated on every tick, the timer shall count 
+/// from a timeout value down to zero, and once its count ended the timer will stop and execute the 
+/// function callback registered(the third parameter is optional in case no callback is needed a NULL
+/// shall be passed).To successfully register a timer the time in milliseconds should be larger than 
+/// the actual tick and multiple.The function returns an ID which is a value from 1 to the number of 
+/// timer registers in the scheduler, otherwise, it will return zero indicating the timer couldn't 
+/// be registered.
+/// </summary>
+unsigned char Scheduler_RegisterTimer(Scheduler_t* hscheduler, unsigned long Timeout, void (*CallbackPtr)(void))
+{
+    unsigned char returnVal = 0;
+    if (hscheduler->timerCount < hscheduler->timers) //There's space to register new timer
+    {
+        if ((Timeout % hscheduler->BaseTick == 0) && (Timeout > hscheduler->BaseTick)) //Time out is valid number
+        {
+            hscheduler->timerPtr[hscheduler->timerCount].callbackPtr = CallbackPtr;
+            hscheduler->timerPtr[hscheduler->timerCount].Timeout = Timeout;
+            hscheduler->timerPtr[hscheduler->timerCount].StartFlag = TIMER_OFF;
+            hscheduler->timerCount++;
+            returnVal = hscheduler->timerCount;
+
+        }
+    }
+    return returnVal;
+}
+/// <summary>
+/// The function will return the current timer pending time in milliseconds, in case the timer does not 
+/// been registered the function returns a zero value
+/// </summary>
+unsigned long Scheduler_GetTimer(Scheduler_t* hscheduler, unsigned char Timer)
+{
+    unsigned long returnVal= 0;
+    if ((Timer <= hscheduler->timerCount) && (Timer > 0)) // Timer exist
+    {
+        returnVal = hscheduler->timerPtr[Timer - 1].Count;
+    }
+    return returnVal;
+}
+/// <summary>
+/// The timer will be reloaded with a new value in milliseconds it will also start the timer,
+/// the function does not require the timer to stop first, but if the timer to reload has not
+/// been registered no action will be taken and it will return a zero, otherwise return one as
+/// an indication of success.
+/// </summary>
+unsigned char Scheduler_ReloadTimer(Scheduler_t* hscheduler, unsigned char Timer, unsigned long Timeout)
+{
+    unsigned char returnVal = NOT_REGISTERED;
+    if ((Timer <= hscheduler->timerCount) && (Timer > 0)) // Timer exist
+    {
+        //Update timeout
+        hscheduler->timerPtr[Timer - 1].Timeout = Timeout;
+
+        //Reset count
+        hscheduler->timerPtr[Timer - 1].Count = Timeout;
+
+        // Start timer
+        Scheduler_StartTimer(hscheduler,Timer);
+
+        returnVal = SUCCESS;
+    }
+    return returnVal;
+}
+/// <summary>
+/// By default the timer count does not start when the timer is registered, it is necessary to call this function,
+/// the actual timer decrement count is carried out during each tick occurrence.The function will also serve as a
+/// mechanism of restart the timer from its timeout.If the timer to start has not been registered no action will 
+/// be taken and it will return a zero, otherwise return one as an indication of success.
+/// </summary>
+unsigned char Scheduler_StartTimer(Scheduler_t* hscheduler, unsigned char Timer)
+{
+    unsigned char returnVal = NOT_REGISTERED;
+
+    if ((Timer <= hscheduler->timerCount) && (Timer > 0)) // Timer exist
+    {
+        //Reset count
+        hscheduler->timerPtr[Timer - 1].Count = hscheduler->timerPtr[Timer - 1].Timeout;
+        
+        //Set start flag
+        hscheduler->timerPtr[Timer - 1].StartFlag = TIMER_ON;
+
+        returnVal = SUCCESS;
+    }
+    return returnVal;
+}
+/// <summary>
+/// The function will indicate the timer should not be decremented during each tick occurrence. 
+/// If the timer to stop has not been registered no action will be taken and it will return a zero,
+/// otherwise return one as an indication of success.
+/// /// </summary>
+unsigned char Scheduler_StopTimer(Scheduler_t* hscheduler, unsigned char Timer)
+{
+    unsigned char returnVal = NOT_REGISTERED;
+
+    if ((Timer <= hscheduler->timerCount) && (Timer > 0)) // Timer exist
+    {
+        //Turn off start flag
+        hscheduler->timerPtr[Timer - 1].StartFlag = TIMER_OFF;
+        if (hscheduler->timerPtr[Timer - 1].callbackPtr != NULL)
+        {
+            hscheduler->timerPtr[Timer - 1].callbackPtr();
+        }
+
+        returnVal = SUCCESS;
+    }
+    return returnVal;
+}
 // ************************ Main ************************
 int main(void) {
 
@@ -229,10 +360,13 @@ int main(void) {
 
     unsigned char TaskID1;
     unsigned char TaskID2;
+    
    
     //register two task with thier corresponding init fucntions and their periodicyt, 100ms and 200ms
     TaskID1 = Scheduler_RegisterTask(&scheduler, Init_200ms, Task_200ms, P_TASK1);
     TaskID2 = Scheduler_RegisterTask(&scheduler, Init_1000ms, Task_1000ms, P_TASK2);
+    TimerID = Scheduler_RegisterTimer(&scheduler, 800u, Callback);
+    Scheduler_StartTimer(&scheduler,TimerID);
     
     //run the scheduler for the mount of time stablished in Sche.timeout
     Scheduler_Start(&scheduler);
