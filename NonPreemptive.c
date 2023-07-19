@@ -76,8 +76,19 @@ unsigned char Scheduler_RegisterTask(Scheduler_t* hscheduler, void (*InitPtr)(vo
 /// </summary>
 unsigned char Scheduler_StopTask(Scheduler_t* hscheduler, unsigned char task)
 {
-    hscheduler->TaskList[task - 1].stop = 1;
-    return 1;
+    unsigned char returnVal;
+    if ((task <= hscheduler->tasksNum) && (task > 0))
+    {
+        hscheduler->TaskList[task - 1].stop = 1;
+        returnVal = 1;
+    }
+    else
+    {
+        returnVal = 0;
+    }
+    
+    return returnVal;
+
 
 }
 /// <summary>
@@ -88,12 +99,21 @@ unsigned char Scheduler_StopTask(Scheduler_t* hscheduler, unsigned char task)
 /// </summary>
 unsigned char Scheduler_StartTask(Scheduler_t* hscheduler, unsigned char task) 
 {
-    hscheduler->TaskList[task - 1].stop = 1;
-    return 1;
+    unsigned char returnVal;
+    if ((task <= hscheduler->tasksNum) && (task > 0))
+    {
+        hscheduler->TaskList[task - 1].stop = 1;
+        returnVal = 1;
+    }
+    else
+    {
+        returnVal = 0;
+    }
+    return returnVal;
 }
 
 /// <summary>
-/// The new periodicity shall be a multiple of the tick value otherwise won’t be 
+/// The new periodicity shall be a multiple of the tick value otherwise wonâ€™t be 
 /// affected by the new period. The second parameter indicates the task to be started, 
 /// which is a number from 1 to n task registered.Number zero is forbidden.the function
 ///  will return a TRUE if the task was stopped otherwise returns FALSE.
